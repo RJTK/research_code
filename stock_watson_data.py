@@ -101,11 +101,12 @@ def load_data(file_name, csv_params):
   return df
 
 def load_params(file_name, csv_params):
-  params = pd.read_csv(SW_DIR + file_name, **csv_params)
+  params = pd.read_csv(file_name, **csv_params)
   #Strip whitespace
   params.rename(columns = {hdr : str.strip(hdr)
                            for hdr in params.columns},
                 inplace = True)
+  params = params.T
   return params
 
 def data_xform(df, df_Tcodes, xform_funcs, xform_set = None):
@@ -113,6 +114,7 @@ def data_xform(df, df_Tcodes, xform_funcs, xform_set = None):
     xform_set = df_Tcodes.index
 
   #Make a copy of the dataframe which will be returned.
+  #This allows one to call for example s = data_xform(q)
   df_cpy = df.copy()
 
   for s in xform_set:
@@ -131,16 +133,17 @@ def data_xform(df, df_Tcodes, xform_funcs, xform_set = None):
 #by the variance matters!
 #--------------------------------------------
 def normalize_and_center(df, df_params):
-  df_params.ix['mean'] = df.mean(0)
-  df_params.ix['sigma'] = df.std(0)
-  df.loc[:, :] = df - df_params.ix['mean']
-  df.loc[:, :] = df / df_params.ix['sigma']
-  return
+  df_params_cpy = df_params.copy()
+  df_params_cpy.loc[:, 'mean'] = df.mean(0)
+  df_params_cpy.loc[:, 'std'] = df.std(0)
+  df_cpy = df - df_params_cpy['mean']
+  df_cpy = df_cpy / df_params_cpy['std']
+  return df_cpy, df_params_cpy
 
 def revert_normalize_and_center(df, df_params):
-  df.loc[:, :] = df * df_params.ix['sigma']
-  df.loc[:, :] = df + df_params.ix['mean']
-  return
+  df_cpy = df * df_params.ix['std']
+  df_cpy = df + df_params.ix['mean']
+  return df_cpy
 #--------------------------------------------
 
 def test_stationarity(df, adf_params, adf_pvalue = 0.05):
@@ -158,19 +161,21 @@ def test_stationarity(df, adf_params, adf_pvalue = 0.05):
   return nonstationary_series
 
 def update_Tcodes(nonstationary, df_Tcodes):
+  #nonstationary is a list of tuples (name, pv)
+  df_Tcodes_cpy = pd.DataFrame(df_Tcodes)
   for s in nonstationary:
     name = s[0]
-    tcode = int(df_Tcodes[name])
+    tcode = df_Tcodes[name]
     if tcode == 1:
-      df_Tcodes.loc[name] = 2
+      df_Tcodes_cpy.loc[name] = 2
     elif tcode == 2:
-      df_Tcodes.loc[name] = 3
+      df_Tcodes_cpy.loc[name] = 3
     elif tcode == 3:
       print 'WARN: series %s already 2nd differenced' % name
     elif tcode == 4:
-      df_Tcodes.loc[name] = 5
+      df_Tcodes_cpy.loc[name] = 5
     elif tcode == 5:
-      df_Tcodes.loc[name] = 6
+      df_Tcodes_cpy.loc[name] = 6
     elif tcode == 6:
       print 'WARN: series %s already 2nd differenced' % name
     else:
@@ -180,10 +185,10 @@ def update_Tcodes(nonstationary, df_Tcodes):
 def main():
   #Load data and Tcodes
   monthly_original = load_data(SW_DIR + SW_MONTHLY, monthly_csv_params)
-  monthly_params_original = load_params(SW_MONTHLY,
+  monthly_params_original = load_params(SW_DIR + SW_MONTHLY,
                                         monthly_csv_extras_params)
   quarterly_original = load_data(SW_DIR + SW_QUARTERLY, quarterly_csv_params)
-  quarterly_params_original = load_params(SW_QUARTERLY,
+  quarterly_params_original = load_params(SW_DIR + SW_QUARTERLY,
                                           quarterly_csv_extras_params)
 
   #Copy all the data
@@ -198,21 +203,21 @@ def main():
 #  monthly = monthly.drop('FMRNBA', 1)
 #  monthly_params = monthly_params.drop('FMRNBA', 1)
 
-  monthly_Tcodes = pd.to_numeric(monthly_params.ix['Tcode'])
-  quarterly_Tcodes = pd.to_numeric(quarterly_params.ix['Tcode'])
+  monthly_params.loc[:, 'Tcode'] = monthly_params['Tcode'].apply(int)
+  quarterly_params.loc[:, 'Tcode'] = quarterly_params['Tcode'].apply(int)
 
   #See comment above
-  monthly_Tcodes.loc['FMRNBA'] = 1
+  monthly_params.loc['FMRNBA', 'Tcode'] = 1
 
   #Apply stationarity transforms
   monthly = monthly.dropna()
   quarterly = quarterly.dropna()
-  monthly = data_xform(monthly, monthly_Tcodes, xform_funcs)
-  quarterly = data_xform(quarterly, quarterly_Tcodes, xform_funcs)
+  monthly = data_xform(monthly, monthly_params['Tcode'], xform_funcs)
+  quarterly = data_xform(quarterly, quarterly_params['Tcode'], xform_funcs)
 
   #Normalize and center the data
-  normalize_and_center(monthly, monthly_params)
-  normalize_and_center(quarterly, quarterly_params)
+  monthly, monthly_params = normalize_and_center(monthly, monthly_params)
+  quarterly, quarterly_params = normalize_and_center(quarterly, quarterly_params)
 
   #--------FIX MONTHLY STATIONARITY------------
   #Test stationarity
@@ -230,11 +235,12 @@ def main():
     if(len(monthly_nonstationary) > 0):
       nonstationary_names, _ = zip(*monthly_nonstationary)
 
-      monthly_Tcodes = update_Tcodes(monthly_nonstationary, monthly_Tcodes)
+      monthly_params.loc[:, 'Tcode'] = update_Tcodes(monthly_nonstationary,
+                                                monthly_params.loc[:,'Tcode'])
 
       monthly.loc[:, list(nonstationary_names)] = data_xform(
         monthly_original.dropna(),
-        monthly_Tcodes,
+        monthly_params.loc[:, 'Tcode'],
         xform_funcs,
         list(nonstationary_names)
       )
@@ -263,23 +269,24 @@ def main():
 
   if MY_TCODES:
     if(len(quarterly_nonstationary)):
-      quarterly_Tcodes = update_Tcodes(quarterly_nonstationary, quarterly_Tcodes)
+      quarterly_params.loc[:, 'Tcode'] = update_Tcodes(quarterly_nonstationary,
+                                          quarterly_params.loc[:, 'Tcode'])
       nonstationary_names, _ = zip(*quarterly_nonstationary)
 
       quarterly.loc[:, list(nonstationary_names)] = data_xform(
         quarterly_original.dropna(),
-        quarterly_Tcodes,
+        quarterly_params.loc[:, 'Tcode'],
         xform_funcs,
         list(nonstationary_names))
 
       pv = .05
       quarterly_nonstationary = test_stationarity(quarterly, adfuller_params, pv)
-      print 'Number of nonstationary quarterly series at p ~= %f: %d'\
+      print 'Number of nonstationary quarterly series (my Tcodes) at p ~= %f: %d'\
         % (pv, len(quarterly_nonstationary))
 
       pv = .01
       quarterly_nonstationary = test_stationarity(quarterly, adfuller_params, pv)
-      print 'Number of nonstationary quarterly series at p ~= %f: %d'\
+      print 'Number of nonstationary quarterly series (my Tcodes) at p ~= %f: %d'\
         % (pv, len(quarterly_nonstationary))
 
   #Sanity checks
