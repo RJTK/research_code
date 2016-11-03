@@ -135,7 +135,7 @@ def data_xform(df, df_Tcodes, xform_funcs, xform_set = None):
 def normalize_and_center(df, df_params):
   df_params_cpy = df_params.copy()
   df_params_cpy.loc[:, 'mean'] = df.mean(0)
-  df_params_cpy.loc[:, 'std'] = df.std(0)
+  df_params_cpy.loc[:, 'std'] = df.std(0, ddof = 0)
   df_cpy = df - df_params_cpy['mean']
   df_cpy = df_cpy / df_params_cpy['std']
   return df_cpy, df_params_cpy
