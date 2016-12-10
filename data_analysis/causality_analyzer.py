@@ -13,10 +13,10 @@ from matplotlib.widgets import Slider
 from progressbar import Bar, Percentage, ETA, ProgressBar, SimpleProgress
 
 #My own stuff
-from resource_limiter import limit_memory_as
-from data_manipulation import *
-from cross_validation import *
-from ts_models import *
+from granger_models.resource_limiter import limit_memory_as
+from granger_models.data_manipulation import *
+from granger_models.cross_validation import *
+from granger_models.ts_models import *
 
 #This fits together various routines used for analyzing GC graphs.
 #The data is expected to be already centered and stationary
@@ -37,8 +37,8 @@ def plot_matrix_ev(M, ax, mrkr = 'rx'):
 
 #-------PACKAGED FITTING METHODS------------
 def fit_var(A, OLS = True, OLST = True, LASSO = True, TRACE = True,
-            DWGLASSO = True):
-  G, D, p, n, T = A['G'], A['D'], A['p'], A['n'], A['T']
+            DWGLASSO = True, plt_reg_path = False):
+  G, D, p, n, T, B_true = A['G'], A['D'], A['p'], A['n'], A['T'], A['B']
 
   #Baseline error measures
   def true_mean_err(Y):
@@ -81,6 +81,8 @@ def fit_var(A, OLS = True, OLST = True, LASSO = True, TRACE = True,
   err_mean_verif = training_mean_err(Y_train, Y_verif) / N_verif
   err_prev_test = prev_point_err(D_test, I_test) / N_test
   err_prev_verif = prev_point_err(D_verif, I_verif) / N_verif
+  err_true_test = model_err(B_true, Y_test, Z_test) / N_test
+  err_true_verif = model_err(B_true, Y_verif, Z_verif) / N_verif
 
   #Real methods
   if OLS:
@@ -96,6 +98,19 @@ def fit_var(A, OLS = True, OLST = True, LASSO = True, TRACE = True,
                                                  lmbda_max = 5000)
     err_OLST_test = model_err(B_OLST, Y_test, Z_test) / N_test
     err_OLST_verif = model_err(B_OLST, Y_verif, Z_verif) / N_verif
+
+    if plt_reg_path:
+      Lmbda = np.linspace(0.5, 200, 2000)
+      _, _, _, B_path, = cx_validate(Y_train, Z_train,
+                                     Y_test, Z_test,
+                                     Lmbda, fit_olst,
+                                     ret_path = True)
+
+      [plt.plot(Lmbda, B_path[i,j,:]) for i in range(n) for j in range(n)]
+      plt.xlabel('$\lambda$')
+      plt.ylabel('$B_{ij}$')
+      plt.title('OLST Regularization Path')
+      plt.show()
     
   if LASSO:
     B_LASSO, lmbda_LASSO_star, _ = cx_validate_opt(Y_train, Z_train,
@@ -105,6 +120,19 @@ def fit_var(A, OLS = True, OLST = True, LASSO = True, TRACE = True,
                                                    lmbda_max = 5000)
     err_LASSO_test = model_err(B_LASSO, Y_test, Z_test) / N_test
     err_LASSO_verif = model_err(B_LASSO, Y_verif, Z_verif) / N_verif
+
+    if plt_reg_path:
+      Lmbda = np.linspace(0.5, 18, 200)
+      _, _, _, B_path, = cx_validate(Y_train, Z_train,
+                                     Y_test, Z_test,
+                                     Lmbda, spams_lasso,
+                                     ret_path = True)
+
+      [plt.plot(Lmbda, B_path[i,j,:]) for i in range(n) for j in range(n)]
+      plt.xlabel('$\lambda$')
+      plt.ylabel('$B_{ij}$')
+      plt.title('LASSO Regularization Path')
+      plt.show()
 
   if TRACE:
     spams_trace = spams_trace_setup(Y_train, Z_train)
@@ -116,22 +144,62 @@ def fit_var(A, OLS = True, OLST = True, LASSO = True, TRACE = True,
     err_TRACE_test = model_err(B_TRACE, Y_test, Z_test) / N_test
     err_TRACE_verif = model_err(B_TRACE, Y_verif, Z_verif) / N_verif
 
+    if plt_reg_path:
+      Lmbda = np.linspace(0.5, 18, 200)
+      _, _, _, B_path, = cx_validate(Y_train, Z_train,
+                                     Y_test, Z_test,
+                                     Lmbda, spams_trace,
+                                     ret_path = True)
+
+      [plt.plot(Lmbda, B_path[i,j,:]) for i in range(n) for j in range(n)]
+      plt.xlabel('$\lambda$')
+      plt.ylabel('$B_{ij}$')
+      plt.title('Trace Regularization Path')
+      plt.show()
+
   if DWGLASSO:
-#    g = np.array([1] + [0]*(n**2 - 1))
-    
-#    DepthWiseGroups =  #DO THIS...
-    spams_dwglasso = spams_glasso_setup(Y_train, Z_train)
     B_DWGLASSO, lmbda_DWGLASSO_star, _ = cx_validate_opt(Y_train, Z_train,
                                                          Y_test, Z_test,
-                                                         spams_dwglasso,
+                                                         dwglasso,
                                                          lmbda_min = 0.0001,
                                                          lmbda_max = 5000)
+    # Lmbda = np.linspace(.5, 20, 200)
+    # B_DWGLASSO, lmbda_DWGLASSO_star, errs, B_path, = cx_validate(Y_train,
+    #                                                              Z_train,
+    #                                                              Y_test, Z_test,
+    #                                                              Lmbda, dwglasso,
+    #                                                              ret_path = True)
+    #B_DWGLASSO = dwglasso(Y_train, Z_train, 50)
+
     err_DWGLASSO_test = model_err(B_DWGLASSO, Y_test, Z_test) / N_test
     err_DWGLASSO_verif = model_err(B_DWGLASSO, Y_verif, Z_verif) / N_verif
+    if plt_reg_path:
+      Lmbda = np.linspace(0.5, 20, 200)
+      B_DWGLASSO, lmbda_DWGLASSO_star, errs, B_path, = cx_validate(Y_train,
+                                                                   Z_train,
+                                                                   Y_test, Z_test,
+                                                                   Lmbda, dwglasso,
+                                                                   ret_path = True)
+
+      [plt.plot(Lmbda, B_path[i,j,:]) for i in range(n) for j in range(n)]
+      plt.xlabel('$\lambda$')
+      plt.ylabel('$B_{ij}$')
+      plt.title('DWGLASSO Regularization Path')
+      plt.show()
+
+
+  # plt.imshow(np.abs(B_DWGLASSO) > 1e-5)
+  # plt.title('DWGLASSO $|B| > 10^{-5}$')
+  # plt.show()
+
+  # plt.imshow(np.abs(B_LASSO) > 0)
+  # plt.title('LASSO $B > 0$')
+  # plt.show()
 
   print 'err_0_test: %f' % err_0_test
   print 'err_mean_test: %f' % err_mean_test
   print 'err_prev_test: %f' % err_prev_test
+  print 'err_true_test: %f' % err_true_test
   print 'err_OLS_test: %f' % err_OLS_test
   if OLST: print 'err_OLST_test: %f' % err_OLST_test
   if LASSO: print 'err_LASSO_test: %f' % err_LASSO_test
@@ -143,6 +211,7 @@ def fit_var(A, OLS = True, OLST = True, LASSO = True, TRACE = True,
   print 'err_0_verif: %f' % err_0_verif
   print 'err_mean_verif: %f' % err_mean_verif
   print 'err_prev_verif: %f' % err_prev_verif
+  print 'err_true_verif: %f' % err_true_verif
   print 'err_OLS_verif: %f' % err_OLS_verif
   if OLST: print 'err_OLST_verif: %f' % err_OLST_verif
   if LASSO: print 'err_LASSO_verif: %f' % err_LASSO_verif
@@ -322,7 +391,8 @@ def ROC_curves(A, model):
   plt.show()
   return
 
-def causality_graph(A, model, FDR_plot = False):
+def causality_graph(A, model, FDR_plot = False, lmbda = None, plt_B = False,
+                    delta = 1e-5):
   '''
   A should be a dataset dictionary (see data_synthesis/data_synth.py)
   model is one of the possible time series models, fit_ols, fit_olst etc...
@@ -339,11 +409,26 @@ def causality_graph(A, model, FDR_plot = False):
 
 
   #--------FIT MODEL-------------
-  B, lmbda_star, err_star = cx_validate_opt(Y_train, Z_train,
-                                            Y_test, Z_test,
-                                            model,
-                                            lmbda_min = 0.0001,
-                                            lmbda_max = 5000)
+  if lmbda is None:
+    B, lmbda_star, err_star = cx_validate_opt(Y_train, Z_train,
+                                              Y_test, Z_test,
+                                              model,
+                                              lmbda_min = 0.0001,
+                                              lmbda_max = 5000)
+  else:
+    B = model(Y_train, Z_train, lmbda)
+    lmbda_star = lmbda
+
+
+  if plt_B:
+    plt.imshow(B)
+    plt.colorbar()
+    plt.show()
+    plt.imshow(B == 0)
+    plt.colorbar()
+    plt.show()
+    plt.imshow(abs(B) >= delta)
+    plt.show()
 
 #  Lmbda = np.linspace(0.0001, 9, 500)
 #  B, lmbda_star, errs = cx_validate(Y_train, Z_train,
@@ -355,7 +440,7 @@ def causality_graph(A, model, FDR_plot = False):
   cm =  mpl_colors.ListedColormap(['blue', 'white', 'black', 'red'])
   bounds = [-1.1, 0, 1, 2, 2.1]
   norm = mpl_colors.BoundaryNorm(bounds, cm.N)
-  A = adj_matrix(B, p)
+  A = adj_matrix(B, p, delta = delta)
 
   fig, ax = plt.subplots(1, 1)
   ax.set_title(model.__name__)
@@ -370,7 +455,7 @@ def causality_graph(A, model, FDR_plot = False):
   def update(x):
     lmbda = lmbda_slider.val
     B = model(Y_train, Z_train, lmbda)
-    A = adj_matrix(B, p)
+    A = adj_matrix(B, p, delta = delta)
     A_img.set_data(2*A - G)
     A_img.autoscale()
     fig.canvas.draw()
@@ -434,6 +519,7 @@ def laplace_spectrum(DB, model):
 #    fig.canvas.draw()
     return
 
+    
   lmbda_slider.on_changed(update)
   plt.show()
 
@@ -442,24 +528,49 @@ def laplace_spectrum(DB, model):
 if __name__ == '__main__':
   limit_memory_as(int(7000e6))
   np.random.seed(1)
-  DB = load_data(DATA_DIR + 'iidG_ER_p1_T200.pkl')
-#  DB = load_data(DATA_DIR + 'iidG_ER_p2_T500.pkl')
-#  DB = load_data(DATA_DIR + 'iidG_ER_p2_T500_n5.pkl')
-#  DB = load_data(DATA_DIR + 'iidG_ER_p2_T20000_n100.pkl')
-#  causality_graph_comparison(DB)
-#  causality_graph_LASSO(DB)
+  file_names = ['iidG_ER_p2_T50_n5', 'iidG_ER_p1_T200_n10',
+                'iidG_ER_p2_T200_n10', 'iidG_ER_p2_T500_n100',
+                'iidG_ER_p2_T20000_n100', 'iidG_ER_p3_T1000_n100',
+                'iidG_ER_p4_T1000_n20', 'iidG_ER_p5_T1000_n5',
+                'iidG_ER_p5_T5000_n100', 'iidG_ER_p20_T5000_n100',
+                'iidG_ER_p1_T50000_n100', 'iidG_ER_p1_T5000_n10']
+  file_names = [DATA_DIR + n + '.pkl' for n in file_names]
+
+  DBs = []
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p2_T50_n5.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p1_T200_n10.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p2_T200_n10.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p2_T500_n100.pkl'))
+#  DBs.append(load_data(DATA_DIR + 'iidG_ER_p2_T20000_n100.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p3_T1000_n100.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p4_T1000_n100.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p5_T1000_n20.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p5_T1000_n5.pkl'))
+  DBs.append(load_data(DATA_DIR + 'iidG_ER_p5_T5000_n100.pkl'))
+#  DBs.append(load_data(DATA_DIR + 'iidG_ER_p20_T5000_n100.pkl'))
+#  DBs.append(load_data(DATA_DIR + 'iidG_ER_p1_T50000_n100.pkl'))
+
   spams_trace = spams_trace_setup()
   spams_glasso = spams_glasso_setup()
 
   fit_var_args = {'OLST' : True,
                   'LASSO' : True,
-                  'TRACE' : True,
-                  'DWGLASSO' : False}
+                  'TRACE' : False,
+                  'DWGLASSO' : True}
 
-  causality_graph(DB, fit_olst)
-  fit_var(DB, **fit_var_args)
-  causality_graph(DB, spams_lasso)
-  causality_graph(DB, spams_trace)
-  ROC_curves(DB, spams_lasso)
-#  causality_graph_comparison(DB)
-  laplace_spectrum(DB, spams_lasso)
+  for name, DB in zip(file_names, DBs):
+    name = name.split('_')
+    print '------------p = %s, T = %s, n = %s-------------' \
+      % (name[3][1:], name[4][1:], name[5].split('.')[0][1:])
+    fit_var(DB,  plt_reg_path = False, **fit_var_args)
+    print '\n'
+    #  causality_graph_LASSO(DB)
+    #  causality_graph(DB, fit_olst)
+    #causality_graph(DB, spams_lasso)
+    #  causality_graph(DB, spams_trace)
+    #  causality_graph(DB, dwglasso, delta = 1e-4)
+    #causality_graph(DB, dwglasso, lmbda = 2.5, plt_B = True)
+    #  ROC_curves(DB, spams_lasso)
+    #  causality_graph_comparison(DB)
+    #  laplace_spectrum(DB, spams_lasso)
+    

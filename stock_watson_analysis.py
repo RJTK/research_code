@@ -5,9 +5,13 @@ import spams as spm
 from random import shuffle
 from matplotlib import pyplot as plt
 from matplotlib.widgets import Slider
-from spams import lasso
 from progressbar import Bar, Percentage, ETA, ProgressBar
 
+#MY STUFF
+from granger_models.ts_models import *
+from granger_models.cross_validation import *
+from granger_models.data_manipulation import *
+from granger_models.resource_limiter import limit_memory_as
 from stock_watson_data import load_data
 
 SW_DIR = '/home/ryan/Documents/academics/research/'\
@@ -31,69 +35,13 @@ F_TRAIN = 0.7 #% for training
 F_TEST = 0.9 #F_TEST - F_TRAIN = % for testing
 F_VERIF = 1.0 #This should always be 1
 
-def build_YZ(D, I, p):
-  T = len(I)
-  if T == 0:
-    return np.array([]), np.array([])
-  Y = np.array(D[p:]).T
-
-  Z = np.array(D.ix[I[p - 1: : -1]]).flatten()
-  for k in range(1, T - p):
-    Zk = np.array(D.ix[I[k + p - 1: k - 1: -1]]).flatten()
-    Z = np.vstack((Z, Zk))
-  Z = Z.T
-  return Y, Z
-
-#This is the solution for the formulation
-#||Y - BZ||_F^2 Where B is the variable
-def OLS(Y, Z):
-  ZZT = np.dot(Z, Z.T)
-  ZZT_inv = np.linalg.inv(ZZT)
-  YZT = np.dot(Y, Z.T)
-  B = np.dot(YZT, ZZT_inv)
-  return B
-
-def OLS_tikhonov(Y, Z, lmbda, ZZT = None):
-  if ZZT is None:
-    ZZT = np.dot(Z, Z.T)
-  tmp = lmbda*np.eye(ZZT.shape[0]) + ZZT
-  tmp = np.linalg.inv(tmp)
-  YZT = np.dot(Y, Z.T)
-  B = np.dot(YZT, tmp)
-  return B
-
-def spams_lasso(Y, Z, lmbda):
-  Y_spm = np.asfortranarray(Y.T)
-  Z_spm = np.asfortranarray(Z.T)
-  B = lasso(Y_spm, Z_spm, lambda1 = lmbda, lambda2 = 0,
-            mode = spm.PENALTY)
-  B = B.toarray()
-  return B.T
-
-def cx_validate(Y_train, Z_train, Y_test, Z_test, Lmbda, f, **kwargs):
-  errs = []
-  widgets = [Percentage(), ' ', Bar(), ' ', ETA()]
-  pbar = ProgressBar(widgets = widgets, maxval = len(Lmbda))
-  pbar.start()
-  for lmbda_i, lmbda in enumerate(Lmbda):
-    pbar.update(lmbda_i)
-    B = f(Y_train, Z_train, lmbda, **kwargs)
-    Y_hat_test = np.dot(B, Z_test)
-    err_test = np.linalg.norm(Y_test - Y_hat_test, 'fro')**2
-    errs.append(err_test)
-    try:
-      if(err_test < min_err):
-        B_star = B
-        min_err = err_test
-        lmbda_star = lmbda
-    except NameError:
-      B_star = B
-      min_err = err_test
-      lmbda_star = lmbda
-  pbar.finish()
-  return B_star, lmbda_star, errs
+def model_err(B, Y, Z):
+  Y_hat = np.dot(B, Z)
+  err = np.linalg.norm(Y_hat - Y, 'fro')**2
+  return err
 
 def main():
+  limit_memory_as(int(7000e6))
   np.random.seed(1)
   D = load_data(SW_DIR + SW_MONTHLY_STATIONARY, csv_params) #Data
   cols = list(D.columns)
@@ -117,66 +65,103 @@ def main():
   D_verif = D.ix[I_verif].copy()
 
   #I should do some kind of reasonable lag order selection
-  p = 2 #Lag order
+  p = 5 #Lag order
 
   Y_all, Z_all = build_YZ(D, D.index, p)
   Y_train, Z_train = build_YZ(D_train, I_train, p)
   Y_test, Z_test = build_YZ(D_test, I_test, p)
   Y_verif, Z_verif = build_YZ(D_verif, I_verif, p)
 
+  N_test = Y_test.size
+  N_verif = Y_verif.size
+
   #-------TRUE MEAN--------
-  err_0_test = np.linalg.norm(Y_test, 'fro')**2 #Since the mean is 0
+  #Since the mean is 0
+  err_0_test = np.linalg.norm(Y_test, 'fro')**2 / N_test 
+  err_0_verif = np.linalg.norm(Y_verif, 'fro')**2 / N_verif
   #-----------------------
   
   #-------TRAINING MEAN------
   Y_mean = Y_train.mean(axis = 1)
-  Y_mean = np.repeat(Y_mean, Y_test.shape[1]).reshape(Y_mean.shape[0],
-                                                      Y_test.shape[1])
-  err_mean_test = np.linalg.norm(Y_test - Y_mean, 'fro')**2
+  Y_mean_test_hat = np.repeat(Y_mean, Y_test.shape[1]).reshape(Y_mean.shape[0],
+                                                               Y_test.shape[1])
+  Y_mean_verif_hat = np.repeat(Y_mean, Y_verif.shape[1]).reshape(Y_mean.shape[0],
+                                                                 Y_verif.shape[1])
+  err_mean_test = np.linalg.norm(Y_test - Y_mean_test_hat, 'fro')**2 / N_test
+  err_mean_verif = np.linalg.norm(Y_verif - Y_mean_verif_hat, 'fro')**2 / N_verif
   #--------------------------
 
   #------PREVIOUS DATA POINT---------
-  Y_prev_test, Y_hat_prev_test = build_YZ(D_test, I_test, 1)
-  err_prev_test = np.linalg.norm(Y_prev_test - Y_hat_prev_test, 'fro')**2
+  Y_prev_test, Y_prev_test_hat = build_YZ(D_test, I_test, 1)
+  Y_verif_test, Y_verif_test_hat = build_YZ(D_verif, I_verif, 1)
+  err_prev_test = np.linalg.norm(Y_prev_test - Y_prev_test_hat, 'fro')**2 / N_test
+  err_prev_verif = np.linalg.norm(Y_verif_test - 
+                                  Y_verif_test_hat, 'fro')**2 / N_verif
   #----------------------------------
 
-  #------RANDOM WALK--------
-  #DO THIS
-  #-------------------------
-
   #----------OLS----------
-  B_OLS = OLS(Y_train, Z_train)
-  Y_hat_OLS_test = np.dot(B_OLS, Z_test)
-  err_OLS_test = np.linalg.norm(Y_test - Y_hat_OLS_test, 'fro')**2
+  B_OLS = fit_ols(Y_train, Z_train)
+  err_OLS_test = model_err(B_OLS, Y_test, Z_test) / N_test
+  err_OLS_verif = model_err(B_OLS, Y_verif, Z_verif) / N_verif
+  Y_OLS_test_hat = np.dot(B_OLS, Z_test)
   #-----------------------
 
-  #NOTE: This is the maximum penalty for LASSO, it can only really be
-  #Heuristic for OLST
-  lmbda_max = np.max(np.dot(Z_train, Y_train.T))
-  print 'lmbda_max: %f' % lmbda_max
-  Lmbda = np.linspace(0, lmbda_max, 30)
-
   #-------OLST------------
-  ZZT = np.dot(Z_train, Z_train.T)
-  B_OLST, lmbda_OLST_star, errs_OLST = cx_validate(Y_train, Z_train, Y_test,
-                                                   Z_test, Lmbda,
-                                                   OLS_tikhonov, ZZT = ZZT)
-  Y_hat_OLST_test = np.dot(B_OLST, Z_test)
-  err_OLST_test = np.linalg.norm(Y_hat_OLST_test - Y_test, 'fro')**2
+  B_OLST, lmbda_OLST_star, errs_OLST = cx_validate_opt(Y_train, Z_train,
+                                                       Y_test, Z_test,
+                                                       fit_olst,
+                                                       lmbda_min = 0.0001,
+                                                       lmbda_max = 5000)
+  err_OLST_test = model_err(B_OLST, Y_test, Z_test) / N_test
+  err_OLST_verif = model_err(B_OLST, Y_verif, Z_verif) / N_verif
+  Y_OLST_test_hat = np.dot(B_OLST, Z_test)
   #-----------------------
 
   #-------LASSO-----------
-  B_LASSO, lmbda_LASSO_star, errs_LASSO = cx_validate(Y_train, Z_train, Y_test,
-                                                      Z_test, Lmbda, spams_lasso)
-  Y_hat_LASSO_test = np.dot(B_LASSO, Z_test)
-  err_LASSO_test = np.linalg.norm(Y_hat_LASSO_test - Y_test, 'fro')**2
+  B_LASSO, lmbda_LASSO_star, _ = cx_validate_opt(Y_train, Z_train,
+                                                 Y_test, Z_test,
+                                                 spams_lasso,
+                                                 lmbda_min = 0.0001,
+                                                 lmbda_max = 5000)
+  err_LASSO_test = model_err(B_LASSO, Y_test, Z_test) / N_test
+  err_LASSO_verif = model_err(B_LASSO, Y_verif, Z_verif) / N_verif
+  Y_LASSO_test_hat = np.dot(B_LASSO, Z_test)
   #----------------------
+
+  #-------DWGLASSO-------
+  B_DWGLASSO, lmbda_DWGLASSO_star, _ = cx_validate_opt(Y_train, Z_train,
+                                                       Y_test, Z_test,
+                                                       dwglasso,
+                                                       lmbda_min = 0.0001,
+                                                       lmbda_max = 5000)
+  err_DWGLASSO_test = model_err(B_DWGLASSO, Y_test, Z_test) / N_test
+  err_DWGLASSO_verif = model_err(B_DWGLASSO, Y_verif, Z_verif) / N_verif
+  Y_DWGLASSO_test_hat = np.dot(B_DWGLASSO, Z_test)
+  #----------------------
+
+  print 'err_0_test: %f' % err_0_test
+  print 'err_mean_test: %f' % err_mean_test
+  print 'err_prev_test: %f' % err_prev_test
+  print 'err_OLS_test: %f' % err_OLS_test
+  print 'err_OLST_test: %f' % err_OLST_test
+  print 'err_LASSO_test: %f' % err_LASSO_test
+  print 'err_DWGLASSO_test: %f' % err_DWGLASSO_test
+
+  print '\n',
+
+  print 'err_0_verif: %f' % err_0_verif
+  print 'err_mean_verif: %f' % err_mean_verif
+  print 'err_prev_verif: %f' % err_prev_verif
+  print 'err_OLS_verif: %f' % err_OLS_verif
+  print 'err_OLST_verif: %f' % err_OLST_verif
+  print 'err_LASSO_verif: %f' % err_LASSO_verif
+  print 'err_DWGLASSO_verif: %f' % err_DWGLASSO_verif
 
   #-----------PLOTS OF THE PREDICTIONS----------------
   plt.plot(Y_test[0, :], linewidth = 2, label = 'True')
-  plt.plot(Y_hat_prev_test[0, :], linewidth = 2, label = 'Prev')
-  plt.plot(Y_hat_OLST_test[0, :], linewidth = 2, label = 'OLST')
-  plt.plot(Y_hat_LASSO_test[0, :], linewidth = 2, label = 'LASSO')
+  plt.plot(Y_OLST_test_hat[0, :], linewidth = 2, label = 'OLST')
+  plt.plot(Y_LASSO_test_hat[0, :], linewidth = 2, label = 'LASSO')
+  plt.plot(Y_DWGLASSO_test_hat[0, :], linewidth = 2, label = 'DWGLASSO')
   plt.legend()
   plt.ylabel('$X_t$')
   plt.xlabel('$t$')
@@ -184,72 +169,15 @@ def main():
   plt.show()
   #---------------------------------------------------
 
-#  plt.hlines(err_OLS_test, min(Lmbda), max(Lmbda), linewidth = 2,
-#             label = 'OLS', color = 'g')
-  plt.hlines(err_mean_test, min(Lmbda), max(Lmbda), linewidth = 2,
-             label = 'mean', color = 'r')
-  plt.hlines(err_0_test, min(Lmbda), max(Lmbda), linewidth = 2,
-             label = '0', color = 'm')
-  plt.plot(Lmbda, errs_OLST, linewidth = 2, label = 'Tikhonov')
-  plt.plot(Lmbda, errs_LASSO, linewidth = 2, label = 'LASSO')
-  plt.legend()
-  plt.ylabel('MSE_train')
-  plt.xlabel('$\lambda$')
-  plt.show()
-
-#  err_OLST_test = min(errs_OLST)
-#  err_LASSO_test = min(errs_LASSO)
-  N = Y_test.size
-  print 'err_0_test: %f' % (err_0_test / N)
-  print 'err_mean_test: %f' % (err_mean_test / N)
-  print 'err_prev_test: %f' % (err_prev_test / N)
-  print 'err_OLS_test: %f' % (err_OLS_test / N)
-  print 'err_OLST_test: %f' % (err_OLST_test / N)
-  print 'err_LASSO_test: %f' % (err_LASSO_test / N)
-
-  err_0_verif = np.linalg.norm(Y_verif, 'fro')**2
-  
-  Y_mean = Y_train.mean(axis = 1)
-  Y_mean = np.repeat(Y_mean, Y_verif.shape[1]).reshape(Y_mean.shape[0],
-                                                      Y_verif.shape[1])
-  err_mean_verif = np.linalg.norm(Y_verif - Y_mean, 'fro')**2
-
-  Y_mean_true = Y_verif.mean(axis = 1)
-  Y_mean = np.repeat(Y_mean_true, Y_verif.shape[1]).reshape(Y_mean.shape[0],
-                                                      Y_verif.shape[1])
-  err_mean_true_verif = np.linalg.norm(Y_verif - Y_mean, 'fro')**2
-
-  Y_hat_OLS_verif = np.dot(B_OLS, Z_verif)
-  err_OLS_verif = np.linalg.norm(Y_verif - Y_hat_OLS_verif, 'fro')**2
-
-  Y_hat_OLST_verif = np.dot(B_OLST, Z_verif)
-  err_OLST_verif = np.linalg.norm(Y_verif - Y_hat_OLST_verif, 'fro')**2
-
-  Y_hat_LASSO_verif = np.dot(B_LASSO, Z_verif)
-  err_LASSO_verif = np.linalg.norm(Y_verif - Y_hat_LASSO_verif, 'fro')**2
-
-  N = Y_verif.size
-  print 'err_0_verif: %f' % (err_0_verif / N)
-  print 'err_mean_verif: %f' % (err_mean_verif / N)
-  print 'err_mean_true_verif: %f' % (err_mean_true_verif / N)
-  print 'err_OLS_verif: %f' % (err_OLS_verif / N)
-  print 'err_OLST_verif: %f' % (err_OLST_verif / N)
-  print 'err_LASSO_verif: %f' % (err_LASSO_verif / N)
-
   #-----------------ADJACENCY MATRICES----------------
-
   #OLST adj matrix
-  num_nodes = B_OLST.shape[0]
-  A_OLST = sum(np.abs(B_OLST[0 : num_nodes,
-                               k*num_nodes : (k + 1)*num_nodes])
-                for k in range(0, p))
-  A_OLST = (np.abs(A_OLST) > 0)
+  A_OLST = adj_matrix(B_OLST, p, delta = 0.1) #Totally arbitrary delta
 
   #LASSO adj matrix
-  A_LASSO = sum(np.abs(B_LASSO[0 : num_nodes,
-                               k*num_nodes : (k + 1)*num_nodes])
-                for k in range(0, p))
-  A_LASSO = (np.abs(A_LASSO) > 0)
+  A_LASSO = adj_matrix(B_LASSO, p, delta = 0)
+
+  #DWGLASSO adj matrix
+  A_DWGLASSO = adj_matrix(B_DWGLASSO, p, delta = 1e-6)
 
   fig, ax = plt.subplots(1,3)
   ax[0].set_title('OLST, $\epsilon$ threshold')
@@ -341,7 +269,6 @@ def main():
     plt.legend()
     plt.show()
   '''
-
   return
 
 if __name__ == '__main__':

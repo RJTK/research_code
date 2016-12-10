@@ -11,8 +11,7 @@ import networkx as nx
 
 from matplotlib import pyplot as plt
 
-from scipy import signal
-from scipy import stats
+from scipy import signal, stats
 
 from LSI_filters import iidG_ER, block_companion, matrix_ev_ax, \
   plot_matrix_ev
@@ -57,7 +56,7 @@ def random_var(n, p, p_radius = 0.9, G_A = None):
     for j in range(n):
       if G_A[i, j]:
         b, a = random_arma(p, 1, p_radius = p_radius)
-        A[:, i, j] = -a[1:]
+        A[:, j, i] = -a[1:]
   return A
 
 #I think it's totally unnecessary to actually generate a literal graph
@@ -158,7 +157,8 @@ class VARpSS(object):
     self.t += T
     return Y
 
-def data_iidG_ER(n, T, p, q, r, s2, file_name, plt_ev = True, plt_ex = False):
+def data_iidG_ER(n, T, p, q, r, s2, file_name = None,
+                 plt_ev = True, plt_ex = False, ret_data = False):
   '''
   We generate an nxn iidG_ER system or order p with underlying erdos
   renyi graph with parameter p.  That is, we generate a random n node
@@ -197,7 +197,7 @@ def data_iidG_ER(n, T, p, q, r, s2, file_name, plt_ev = True, plt_ex = False):
       break
 
   V = VARpSS(B)
-  u = np.random.normal(scale = np.sqrt(s2), size = (n, T))
+  u = np.sqrt(s2)*np.random.normal(scale = 1, size = (n, T))
   Y = V.excite(u)
 
   if plt_ex:
@@ -207,12 +207,15 @@ def data_iidG_ER(n, T, p, q, r, s2, file_name, plt_ev = True, plt_ex = False):
     plt.show()
 
   A = {'n': n, 'p': p, 'q': q, 'r': r, 'T': T + 1, 's2': s2,
-       'G': G, 'B': B, 'D': Y}
+       'G': G, 'B': np.hstack(B), 'D': Y}
 
-  f = open(file_name, 'wb')
-  P = pickle.Pickler(f, protocol = 2)
-  P.dump(A)
-  f.close()
+  if file_name:
+    f = open(file_name, 'wb')
+    P = pickle.Pickler(f, protocol = 2)
+    P.dump(A)
+    f.close()
+  if ret_data:
+    return A
   return
 
 #---------SOME DATA---------
@@ -226,14 +229,35 @@ def data1():
       data_iidG_ER(n = 100, T = Ti, p = pi, q = 0.1, r = 6, s2 = 0.1,
                    file_name = DATA_DIR + 'iidG_ER_p%d_T%d.pkl' % (pi, Ti))
 
-def data2(p, T, n, r, q):
+def data2(p, T, n, r, q, s2, postfix = '', plt_ev = True):
   DATA_DIR = '/home/ryan/Documents/academics/research/' \
              'granger_causality/software/datasets/synthetic/'
 
   data_iidG_ER(n = n, T = T, p = p, q = q, r = r, s2 = 0.1,
-               file_name = DATA_DIR + 'iidG_ER_p%d_T%d_n%d.pkl' % (
-                 p, T, n))
+               file_name = DATA_DIR + 'iidG_ER_p%d_T%d_n%d%s.pkl' % (
+                 p, T, n, postfix), plt_ev = plt_ev)
   return
+
+def data_for_edge_proportions(n_min, n_max, c, p, r, q, s2, K):
+  np.random.seed(1)
+  for n in range(n_min, n_max + 1):
+    T = c*(n**2 - n)/2
+    for k in range(1, K + 1):
+      data2(p, T, n, r, q, s2, postfix = '_%d' % k, plt_ev = False)
   
 if __name__ == '__main__':
-  data2(2, 20000, 100, 1, .1)
+  data_for_edge_proportions(5, 10, 10, 2, 0.65, 0.5, 0.1, 1)
+  #data2(p = 2, T = 50, n = 5, r = 0.65, q = 1, s2 = .1)
+  # data2(p = 1, T = 200, n = 10, r = 0.65, q = .8, s2 = .1)
+  # data2(p = 2, T = 200, n = 10, r = 0.65, q = .8, s2 = .1)
+  # data2(p = 2, T = 500, n = 100, r = 0.65, q = .2, s2 = .1)
+  # data2(p = 2, T = 20000, n = 100, r = 0.65, q = .2, s2 = .1)
+  # data2(p = 3, T = 1000, n = 100, r = 0.65, q = .2, s2 = .1)
+  # data2(p = 4, T = 1000, n = 100, r = 0.65, q = .2, s2 = .1)
+  # data2(p = 5, T = 1000, n = 20, r = 0.65, q = 0.2, s2 = .1)
+  # data2(p = 5, T = 1000, n = 5, r = 0.65, q = 0.5, s2 = .1)
+  # data2(p = 5, T = 5000, n = 100, r = 0.65, q = 0.2, s2 = .1)
+  # data2(p = 20, T = 5000, n = 100, r = 0.65, q = 0.2, s2 = .1)
+  # data2(p = 1, T = 50000, n = 100, r = 0.65, q = 0.2, s2 = .1)
+  # data2(p = 1, T = 5000, n = 10, r = 0.65, q = 0.9, s2 = 0)
+  

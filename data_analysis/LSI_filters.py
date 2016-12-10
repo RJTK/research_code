@@ -8,7 +8,7 @@ from scipy.signal import freqz, group_delay
 from matplotlib import pyplot as plt
 from matplotlib import patches
 
-from resource_limiter import limit_memory_as
+from granger_models.resource_limiter import limit_memory_as
 
 #IN THIS FILE
 
@@ -47,7 +47,7 @@ def iidG_ER(n, p, q, r = 0.65):
   G = random_matrix(n, dB) #graph structure
   #Noramlizer
   k = ((np.pi / 2)**.25) * np.sqrt(float(r) / (n - 1)) / float(sqrt(q)*p)
-  B = [k*random_matrix(n, dN)*G for i in range(p)]
+  B = [k*random_matrix(n, dN)*G.T for i in range(p)]
   M = block_companion(B)
   return B, M, G
 #-------GENERATION UTILITIES---------
@@ -148,7 +148,7 @@ def matrix_ev_ax(fig, n = None, q = None, p = None, r = None):
   if q:
     ax.text(1.0, 1.15, '$q = %f$' % q, fontsize = 18)
   if p:
-    ax.text(1.0, 1.05, '$p = %d$' % p, fontsize = 18)
+    ax.text(1.0, 1.05, '$p = %f$' % p, fontsize = 18)
   if r:
     ax.text(1.0, 0.95, '$r = %r$' % r, fontsize = 18)
   
