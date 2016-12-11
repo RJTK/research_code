@@ -21,26 +21,25 @@ from granger_models.data_manipulation import *
 from granger_models.cross_validation import *
 from granger_models.ts_models import *
 from granger_models.graph_estimator import *
-
-from data_synth import data_iidG_ER
+from filtering.data_synth import data_iidG_ER
 
 DATA_DIR = '/home/ryan/Documents/academics/research/' \
            'granger_causality/software/datasets/synthetic/'
 
-num_threads = 8
-spams_threads = 1
+num_threads = 2
+spams_threads = 4
 
 #simulation parameters
 file_prefix = 'iidG_ER_'
-n_min = 5
-n_max = 10
-c = 1000 #samples per possible edge
+n_min = 50
+n_max = 50
+c = 25 #samples per possible edge
 r = 0.65
 q = 0.5
 s2 = .1
 p = 2
 model = spams_lasso
-delta = 0
+delta = 1e-6
 K = 5
 
 #These functions use the above globals
@@ -55,10 +54,11 @@ def main(n):
   rel_err_star = 0.0
   for k in range(K):
     D = get_data(n, T)['D']
-    A_hat_k, lmbda_star_k, rel_err_star_k = estimate_gcg(D, model, p, T, delta,
-                                                         ret_cv_result = True,
-                                                  numThreads = spams_threads)
-    print A_hat_k
+    A_hat_k, lmbda_star_k,\
+      rel_err_star_k = estimate_gcg(D, model, p, T, delta,
+                                    ret_cv_result = True,
+                                    numThreads = spams_threads)
+
     pe_k = edge_density(A_hat_k)
     pe += pe_k
     lmbda_star += lmbda_star_k
@@ -75,7 +75,7 @@ if __name__ == '__main__':
 
   pool = Pool(num_threads)
   all_n = range(n_min, n_max + 1)
-  #all_n = range(n_min, n_min + 10)
+#  result = map(main, all_n)
   result = pool.map(main, all_n)
   result = sorted(result, key = lambda x: x[3])
   Pe, lmbda_star, rel_err = ([r[i] for r in result] for i in range(3))
